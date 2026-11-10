@@ -76,7 +76,8 @@ async def security_headers(request, call_next):
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-        "script-src 'self'; connect-src 'self'; manifest-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com; "
+        "connect-src 'self' https://vitals.vercel-insights.com; manifest-src 'self'; "
         "worker-src 'self'; object-src 'none'; base-uri 'self'; "
         "frame-ancestors 'none'; form-action 'self'"
     )
