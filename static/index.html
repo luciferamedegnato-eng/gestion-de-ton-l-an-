@@ -13,7 +13,33 @@
   <script src="/assets/app.js" defer></script>
 </head>
 <body>
-  <div id="app-screen" class="app-shell">
+  <main id="auth-screen" class="auth-screen" hidden>
+    <section class="auth-card" aria-labelledby="auth-title">
+      <a class="brand auth-brand" href="/" aria-label="Finmee, accueil"><span class="brand-mark">f</span><span>finmee</span></a>
+      <span class="eyebrow">VOS FINANCES, VOTRE ESPACE</span>
+      <h1 id="auth-title">Prenez vos finances en main.</h1>
+      <p class="auth-intro">Connectez-vous pour retrouver vos opérations, ou créez votre espace personnel.</p>
+      <div class="auth-tabs" role="group" aria-label="Accès au compte">
+        <button type="button" class="auth-tab active" data-auth-mode="login" aria-pressed="true">Connexion</button>
+        <button type="button" class="auth-tab" data-auth-mode="register" aria-pressed="false">Créer un compte</button>
+      </div>
+      <form id="auth-form">
+        <div id="auth-name-field" hidden>
+          <label for="auth-name">Votre nom</label>
+          <input id="auth-name" name="name" type="text" autocomplete="name" maxlength="80" placeholder="Ex. Awa Traoré">
+        </div>
+        <label for="auth-email">Adresse e-mail</label>
+        <input id="auth-email" name="email" type="email" autocomplete="email" maxlength="254" placeholder="vous@exemple.com" required>
+        <label for="auth-password">Mot de passe</label>
+        <input id="auth-password" name="password" type="password" autocomplete="current-password" minlength="1" maxlength="128" required>
+        <p id="auth-message" class="auth-message" role="alert" hidden></p>
+        <button id="auth-submit" class="button button-primary auth-submit" type="submit">Me connecter <span>→</span></button>
+      </form>
+      <p class="auth-footnote">Vos données financières sont privées et rattachées à ce compte. Choisissez un mot de passe que vous pourrez retenir : la réinitialisation par e-mail n’est pas encore disponible.</p>
+    </section>
+  </main>
+
+  <div id="app-screen" class="app-shell" hidden>
     <aside class="sidebar" id="sidebar">
       <a class="brand" href="#" data-page="dashboard"><span class="brand-mark">f</span><span>finmee</span></a>
       <span class="side-label">VOTRE ESPACE</span>
@@ -29,7 +55,8 @@
           <p>Chaque petit suivi vous rapproche de vos objectifs.</p>
         </div>
         <button class="nav-link" data-page="import"><span class="nav-icon">⇧</span>Importer mes données</button>
-        <button class="profile-row" id="profile-button" type="button" aria-label="Modifier mon profil"><span class="avatar" id="profile-avatar">?</span><span class="profile-email" id="profile-name">Ajouter mon nom</span><span class="profile-dot"></span></button>
+        <button class="profile-row" id="profile-button" type="button" aria-label="Modifier mon profil"><span class="avatar" id="profile-avatar">?</span><span class="profile-email" id="profile-name">Mon profil</span><span class="profile-dot"></span></button>
+        <button class="nav-link logout-button" id="logout-button" type="button"><span class="nav-icon">↪</span>Se déconnecter</button>
       </div>
     </aside>
 
@@ -45,7 +72,7 @@
       <section id="dashboard-page" class="page-content">
         <div class="welcome-row"><div><h2>Un aperçu tout en douceur.</h2><p>Voici où en sont vos finances ce mois-ci.</p></div><span class="date-pill" id="today-label"></span></div>
         <div class="summary-grid">
-          <article class="summary-card balance-card"><div class="card-heading"><span>Solde disponible</span><span class="card-symbol symbol-purple">◈</span></div><strong id="balance-total" class="balance-amount">—</strong><span class="card-caption">Revenus moins dépenses cumulés</span><div class="balance-decoration"></div></article>
+          <article class="summary-card balance-card"><div class="card-heading"><span>Solde disponible</span><span class="card-symbol symbol-purple">◈</span></div><strong id="balance-total" class="balance-amount">—</strong><span class="card-caption">Revenus moins dépenses; le solde peut être négatif.</span><div class="balance-decoration"></div></article>
           <article class="summary-card"><div class="card-heading"><span>Revenus du mois</span><span class="card-symbol symbol-teal">↙</span></div><strong id="month-income" class="metric-amount">—</strong><span class="card-caption"><span class="positive-dot"></span>Entrées d’argent</span></article>
           <article class="summary-card"><div class="card-heading"><span>Dépenses du mois</span><span class="card-symbol symbol-pink">↗</span></div><strong id="month-expenses" class="metric-amount">—</strong><span class="card-caption"><span class="pink-dot"></span>Sorties d’argent</span></article>
         </div>
@@ -67,7 +94,7 @@
           <div class="panel-heading"><div><span class="eyebrow">VOS DERNIERS MOUVEMENTS</span><h2>Transactions récentes</h2></div><button class="link-button" data-page="transactions">Tout voir <span>→</span></button></div>
           <div id="recent-transactions"></div>
         </article>
-        <p class="app-footnote">Application locale à utilisateur unique. Gardez cet appareil et son serveur privés.</p>
+        <p class="app-footnote">Votre espace est personnel. Déconnectez-vous sur un appareil partagé.</p>
       </section>
 
       <section id="transactions-page" class="page-content subpage" hidden>
@@ -90,11 +117,11 @@
 
   <dialog id="profile-dialog" class="transaction-dialog profile-dialog">
     <form id="profile-form">
-      <div class="dialog-heading"><div><span class="eyebrow">VOTRE PROFIL LOCAL</span><h2 id="profile-title">Comment vous appelez-vous ?</h2></div><button type="button" class="icon-button" id="close-profile-dialog" aria-label="Fermer">×</button></div>
-      <p class="profile-description">Votre nom sera enregistré avec vos données sur cet appareil.</p>
+      <div class="dialog-heading"><div><span class="eyebrow">VOTRE COMPTE</span><h2 id="profile-title">Modifier mon nom</h2></div><button type="button" class="icon-button" id="close-profile-dialog" aria-label="Fermer">×</button></div>
+      <p class="profile-description">Ce nom est enregistré dans votre espace personnel.</p>
       <label for="profile-name-input">Votre nom</label>
       <input id="profile-name-input" name="name" type="text" autocomplete="name" maxlength="80" placeholder="Ex. Awa Traoré" required>
-      <button class="button button-primary dialog-submit" id="save-profile-button" type="submit">Enregistrer mon nom <span>→</span></button>
+      <button class="button button-primary dialog-submit" id="save-profile-button" type="submit">Enregistrer <span>→</span></button>
     </form>
   </dialog>
 

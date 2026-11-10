@@ -1,11 +1,13 @@
+import base64
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import sqlite3
 import tempfile
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
@@ -25,7 +27,9 @@ DATABASE_PATH = DATABASE_URL or Path(
 )
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "1") != "0"
 CSRF_COOKIE = "depenses_csrf"
-LOCAL_USER_ID = 1
+SESSION_COOKIE = "finmee_session"
+SESSION_DAYS = 30
+PASSWORD_HASH_ROUNDS = 600_000
 MAX_IMPORT_BYTES = 12 * 1024 * 1024
 MAX_AMOUNT_XOF = 1_000_000_000_000_000
 EUR_TO_XOF = Decimal("655.957")
@@ -63,6 +67,17 @@ class TransactionInput(BaseModel):
 
 class ProfileInput(BaseModel):
     name: str = Field(min_length=1, max_length=80)
+
+
+class RegisterInput(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=10, max_length=128)
+
+
+class LoginInput(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=1, max_length=128)
 
 
 @app.middleware("http")
@@ -108,6 +123,77 @@ def _check_csrf(request):
         raise HTTPException(status_code=403, detail="Vérification de sécurité expirée.")
 
 
+def _normalize_email(email):
+    normalized = email.strip().casefold()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized):
+        raise HTTPException(status_code=422, detail="Saisissez une adresse e-mail valide.")
+    return normalized
+
+
+def _hash_password(password):
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt, PASSWORD_HASH_ROUNDS
+    )
+    return "pbkdf2_sha256${}${}${}".format(
+        PASSWORD_HASH_ROUNDS,
+        base64.b64encode(salt).decode("ascii"),
+        base64.b64encode(digest).decode("ascii"),
+    )
+
+
+def _verify_password(password, encoded_hash):
+    try:
+        algorithm, rounds, salt, expected = encoded_hash.split("$")
+        if algorithm != "pbkdf2_sha256" or int(rounds) != PASSWORD_HASH_ROUNDS:
+            raise ValueError("Unsupported password hash.")
+        salt_bytes = base64.b64decode(salt, validate=True)
+        expected_bytes = base64.b64decode(expected, validate=True)
+        if len(salt_bytes) != 16 or len(expected_bytes) != 32:
+            raise ValueError("Invalid password hash.")
+    except (AttributeError, ValueError):
+        hashlib.pbkdf2_hmac(
+            "sha256", password.encode("utf-8"), b"\0" * 16, PASSWORD_HASH_ROUNDS
+        )
+        return False
+    actual = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt_bytes, PASSWORD_HASH_ROUNDS
+    )
+    return hmac.compare_digest(actual, expected_bytes)
+
+
+def _new_session(response, user_id):
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
+    web_database.create_session(
+        DATABASE_PATH,
+        hashlib.sha256(token.encode("ascii")).hexdigest(),
+        user_id,
+        expires_at.isoformat(),
+    )
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        max_age=SESSION_DAYS * 24 * 60 * 60,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite="lax",
+        path="/",
+    )
+
+
+def _current_user(request):
+    token = request.cookies.get(SESSION_COOKIE, "")
+    if token:
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        user = web_database.get_session_user(
+            DATABASE_PATH, token_hash, datetime.now(timezone.utc).isoformat()
+        )
+        if user:
+            return user
+    raise HTTPException(status_code=401, detail="Connectez-vous pour accéder à votre espace.")
+
+
 @app.get("/")
 def home():
     return FileResponse(STATIC_DIR / "index.html")
@@ -138,32 +224,89 @@ def csrf(response: Response, request: Request):
     return {"ok": True}
 
 
-@app.get("/api/profile")
-def get_profile():
-    return web_database.get_local_profile(DATABASE_PATH)
+@app.post("/api/auth/register", status_code=201)
+def register(payload: RegisterInput, request: Request, response: Response):
+    _check_csrf(request)
+    email = _normalize_email(payload.email)
+    name = payload.name.strip()
+    if not name or any(ord(character) < 32 for character in name):
+        raise HTTPException(status_code=422, detail="Saisissez un nom valide.")
+    user = web_database.create_user(
+        DATABASE_PATH, email, name, _hash_password(payload.password)
+    )
+    if user is None:
+        raise HTTPException(
+            status_code=409, detail="Un compte existe déjà avec cette adresse e-mail."
+        )
+    _new_session(response, user["id"])
+    return {"id": user["id"], "name": user["name"], "email": user["email"]}
 
+
+@app.post("/api/auth/login")
+def login(payload: LoginInput, request: Request, response: Response):
+    _check_csrf(request)
+    email = _normalize_email(payload.email)
+    user = web_database.get_user_by_email(DATABASE_PATH, email)
+    password_hash = user["password_hash"] if user else None
+    if not _verify_password(payload.password, password_hash):
+        raise HTTPException(status_code=401, detail="Adresse e-mail ou mot de passe incorrect.")
+    _new_session(response, user["id"])
+    return {"id": user["id"], "name": user["name"], "email": user["email"]}
+
+
+@app.get("/api/auth/me")
+def current_account(request: Request):
+    user = _current_user(request)
+    return {"id": user["id"], "name": user["name"], "email": user["email"]}
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request, response: Response):
+    _check_csrf(request)
+    token = request.cookies.get(SESSION_COOKIE, "")
+    if token:
+        web_database.delete_session(
+            DATABASE_PATH, hashlib.sha256(token.encode("utf-8")).hexdigest()
+        )
+    response.delete_cookie(
+        SESSION_COOKIE,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite="lax",
+        path="/",
+    )
+    return {"ok": True}
+
+
+@app.get("/api/profile")
+def get_profile(request: Request):
+    user = _current_user(request)
+    return {"name": user["name"]}
 
 @app.put("/api/profile")
 def save_profile(payload: ProfileInput, request: Request):
     _check_csrf(request)
+    user = _current_user(request)
     name = payload.name.strip()
     if not name or len(name) > 80 or any(ord(character) < 32 for character in name):
         raise HTTPException(
             status_code=422,
             detail="Saisissez un nom valide de 1 à 80 caractères.",
         )
-    web_database.save_local_profile(DATABASE_PATH, name)
+    web_database.save_user_profile(DATABASE_PATH, user["id"], name)
     return {"name": name}
 
 
 @app.get("/api/dashboard")
-def dashboard():
-    return web_database.get_dashboard(DATABASE_PATH, LOCAL_USER_ID)
+def dashboard(request: Request):
+    user = _current_user(request)
+    return web_database.get_dashboard(DATABASE_PATH, user["id"])
 
 
 @app.get("/api/transactions")
-def transactions():
-    return web_database.get_history(DATABASE_PATH, LOCAL_USER_ID)
+def transactions(request: Request):
+    user = _current_user(request)
+    return web_database.get_history(DATABASE_PATH, user["id"])
 
 
 @app.post("/api/transactions", status_code=201)
@@ -172,6 +315,7 @@ def create_transaction(
     request: Request,
 ):
     _check_csrf(request)
+    user = _current_user(request)
     if payload.type not in {"income", "expense"}:
         raise HTTPException(status_code=422, detail="Type d’opération invalide.")
     try:
@@ -193,7 +337,7 @@ def create_transaction(
     try:
         web_database.add_transaction(
             DATABASE_PATH,
-            LOCAL_USER_ID,
+            user["id"],
             int(amount),
             payload.type,
             payload.description,
@@ -206,9 +350,10 @@ def create_transaction(
 
 
 @app.get("/api/statistics")
-def statistics(period: str = "month"):
+def statistics(request: Request, period: str = "month"):
+    user = _current_user(request)
     try:
-        return web_database.get_statistics(DATABASE_PATH, LOCAL_USER_ID, period)
+        return web_database.get_statistics(DATABASE_PATH, user["id"], period)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from None
 
@@ -238,19 +383,53 @@ def _read_legacy_database(content):
         columns = {
             row["name"] for row in source.execute("PRAGMA table_info(transactions)")
         }
+        source_user_id = None
+        if "users" in tables:
+            user_columns = {
+                row["name"] for row in source.execute("PRAGMA table_info(users)")
+            }
+            if "password_hash" in user_columns and "password_salt" not in user_columns:
+                legacy_user = source.execute(
+                    """
+                    SELECT id FROM users
+                    WHERE email = 'local@finmee.invalid' AND password_hash IS NULL
+                    """
+                ).fetchone()
+                if not legacy_user:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Cette base contient des comptes privés et ne peut pas être importée en bloc.",
+                    )
+                source_user_id = legacy_user["id"]
+            elif source.execute("SELECT COUNT(*) FROM users").fetchone()[0] > 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Une base avec plusieurs comptes ne peut pas être importée en bloc.",
+                )
         amount_column = "amount_xof" if "amount_xof" in columns else "amount_cents"
         required = {"operation_date", amount_column, "type", "description"}
         if not required.issubset(columns):
             raise HTTPException(status_code=400, detail="Format de base SQLite non reconnu.")
-        if source.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] > 100_000:
-            raise HTTPException(status_code=413, detail="La base contient trop de transactions.")
 
         rows = []
         is_legacy_web_database = "user_id" in columns
+        if source_user_id is not None and not is_legacy_web_database:
+            raise HTTPException(
+                status_code=400, detail="Format de base SQLite non reconnu."
+            )
         query_columns = f"operation_date, {amount_column}, type, description"
         if "category" in columns:
             query_columns += ", category"
-        for row in source.execute(f"SELECT {query_columns} FROM transactions"):
+        where_clause = " WHERE user_id = ?" if source_user_id is not None else ""
+        parameters = (source_user_id,) if source_user_id is not None else ()
+        count = source.execute(
+            f"SELECT COUNT(*) FROM transactions{where_clause}", parameters
+        ).fetchone()[0]
+        if count > 100_000:
+            raise HTTPException(status_code=413, detail="La base contient trop de transactions.")
+        for row in source.execute(
+            f"SELECT {query_columns} FROM transactions{where_clause}", parameters
+        ):
             transaction_type = row["type"]
             if transaction_type in {"revenu", "income"}:
                 transaction_type = "income"
@@ -327,13 +506,14 @@ async def import_database(
     file: UploadFile = File(...),
 ):
     _check_csrf(request)
+    user = _current_user(request)
     content = await file.read(MAX_IMPORT_BYTES + 1)
     if len(content) > MAX_IMPORT_BYTES:
         raise HTTPException(status_code=413, detail="Le fichier dépasse la limite de 12 Mo.")
     rows = _read_legacy_database(content)
     imported = web_database.import_transactions(
         DATABASE_PATH,
-        LOCAL_USER_ID,
+        user["id"],
         rows,
         hashlib.sha256(content).hexdigest(),
     )

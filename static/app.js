@@ -4,7 +4,7 @@ const profileDialog = document.querySelector("#profile-dialog");
 let transactionType = "expense";
 let installPrompt = null;
 let profileName = "";
-let profileRequired = false;
+let authMode = "login";
 
 const categories = [
   ["Alimentation", "⌂"],
@@ -36,7 +36,12 @@ async function api(path, options = {}) {
   });
   const data = response.status === 204 ? null : await response.json();
   if (!response.ok) {
-    throw new Error(data?.detail || "Une erreur est survenue. Réessayez.");
+    const error = new Error(data?.detail || "Une erreur est survenue. Réessayez.");
+    error.status = response.status;
+    if (response.status === 401 && !path.startsWith("/api/auth/")) {
+      showAuthScreen("Votre session a expiré. Connectez-vous de nouveau.");
+    }
+    throw error;
   }
   return data;
 }
@@ -58,30 +63,59 @@ function greeting() {
 }
 
 function showApp() {
+  document.querySelector("#auth-screen").hidden = true;
+  document.querySelector("#app-screen").hidden = false;
   document.querySelector("#page-title").textContent = greeting();
   document.querySelector("#today-label").textContent = new Intl.DateTimeFormat("fr-FR", {
     weekday: "short",
     day: "numeric",
     month: "short",
   }).format(new Date());
-  document.querySelector("#profile-name").textContent = profileName || "Ajouter mon nom";
+  document.querySelector("#profile-name").textContent = profileName || "Mon profil";
   document.querySelector("#profile-avatar").textContent =
     profileName ? Array.from(profileName)[0].toLocaleUpperCase("fr-FR") : "?";
   loadDashboard();
 }
 
-function openProfileDialog(required = false) {
-  profileRequired = required;
-  document.querySelector("#profile-title").textContent = required
-    ? "Comment vous appelez-vous ?"
-    : "Modifier mon nom";
+function openProfileDialog() {
   document.querySelector("#profile-name-input").value = profileName;
-  document.querySelector("#close-profile-dialog").hidden = required;
-  document.querySelector("#save-profile-button").innerHTML = required
-    ? 'Enregistrer mon nom <span>→</span>'
-    : 'Enregistrer <span>→</span>';
   profileDialog.showModal();
   document.querySelector("#profile-name-input").focus();
+}
+
+function setAuthMode(mode) {
+  authMode = mode;
+  const registering = mode === "register";
+  document.querySelectorAll(".auth-tab").forEach((tab) => {
+    const active = tab.dataset.authMode === mode;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-pressed", String(active));
+  });
+  document.querySelector("#auth-name-field").hidden = !registering;
+  document.querySelector("#auth-name").required = registering;
+  document.querySelector("#auth-password").minLength = registering ? 10 : 1;
+  document.querySelector("#auth-password").autocomplete = registering
+    ? "new-password"
+    : "current-password";
+  document.querySelector("#auth-submit").innerHTML = registering
+    ? 'Créer mon espace <span>→</span>'
+    : 'Me connecter <span>→</span>';
+  const message = document.querySelector("#auth-message");
+  message.hidden = true;
+  message.classList.remove("success");
+}
+
+function showAuthScreen(message = "") {
+  document.querySelector("#app-screen").hidden = true;
+  document.querySelector("#auth-screen").hidden = false;
+  profileName = "";
+  document.querySelector("#auth-password").value = "";
+  setAuthMode("login");
+  if (message) {
+    const authMessage = document.querySelector("#auth-message");
+    authMessage.textContent = message;
+    authMessage.hidden = false;
+  }
 }
 
 function formatMoney(amountXof) {
@@ -203,6 +237,14 @@ async function loadDashboard() {
       api("/api/statistics?period=month"),
     ]);
     document.querySelector("#balance-total").textContent = formatMoney(summary.balance_xof);
+    document.querySelector("#balance-total").classList.toggle(
+      "negative",
+      summary.balance_xof < 0,
+    );
+    document.querySelector(".balance-card .card-caption").textContent =
+      summary.balance_xof < 0
+        ? "Solde négatif : vos dépenses dépassent vos revenus."
+        : "Revenus moins dépenses; le solde peut être négatif.";
     document.querySelector("#month-income").textContent = formatMoney(summary.month_income_xof);
     document.querySelector("#month-expenses").textContent = formatMoney(summary.month_expense_xof);
     renderTransactions(document.querySelector("#recent-transactions"), summary.transactions);
@@ -269,12 +311,15 @@ async function loadAnalytics() {
 async function initialize() {
   try {
     await api("/api/csrf");
-    const profile = await api("/api/profile");
-    profileName = profile.name;
+    const account = await api("/api/auth/me");
+    profileName = account.name;
     showApp();
-    if (!profileName) openProfileDialog(true);
   } catch (error) {
-    showNotice(`Impossible de démarrer l’application : ${error.message}`);
+    if (error.status === 401) {
+      showAuthScreen();
+    } else {
+      showAuthScreen(`Impossible de démarrer l’application : ${error.message}`);
+    }
   }
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch(() => {
@@ -291,10 +336,6 @@ document.querySelector("#close-profile-dialog").addEventListener("click", () => 
   profileDialog.close();
 });
 
-profileDialog.addEventListener("cancel", (event) => {
-  if (profileRequired) event.preventDefault();
-});
-
 document.querySelector("#profile-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = document.querySelector("#save-profile-button");
@@ -307,14 +348,55 @@ document.querySelector("#profile-form").addEventListener("submit", async (event)
       }),
     });
     profileName = result.name;
-    profileRequired = false;
     profileDialog.close();
     showApp();
-    showNotice("Votre nom est enregistré sur cet appareil.", true);
+    showNotice("Votre nom est enregistré dans votre espace.", true);
   } catch (error) {
     showNotice(error.message);
   } finally {
     button.disabled = false;
+  }
+});
+
+document.querySelectorAll(".auth-tab").forEach((tab) => {
+  tab.addEventListener("click", () => setAuthMode(tab.dataset.authMode));
+});
+
+document.querySelector("#auth-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = document.querySelector("#auth-submit");
+  const data = new FormData(form);
+  const registering = authMode === "register";
+  const payload = {
+    email: data.get("email"),
+    password: data.get("password"),
+  };
+  if (registering) payload.name = data.get("name");
+  button.disabled = true;
+  try {
+    const account = await api(`/api/auth/${registering ? "register" : "login"}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    profileName = account.name;
+    form.reset();
+    showApp();
+  } catch (error) {
+    const message = document.querySelector("#auth-message");
+    message.textContent = error.message;
+    message.hidden = false;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.querySelector("#logout-button").addEventListener("click", async () => {
+  try {
+    await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
+    showAuthScreen("Vous êtes déconnecté.");
+  } catch (error) {
+    showNotice(error.message);
   }
 });
 

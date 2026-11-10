@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import sqlite3
 import tempfile
 import unittest
@@ -47,14 +48,23 @@ class WebAppTests(unittest.TestCase):
         self.client = TestClient(web_app.app)
         self.client.__enter__()
         self.client.get("/api/csrf")
+        self.register_account(self.client, "Test User", "user@example.com")
 
     def tearDown(self):
         self.client.__exit__(None, None, None)
         web_app.COOKIE_SECURE = self.previous_cookie_secure
         self.temp_dir.cleanup()
 
-    def csrf_headers(self):
-        return {"X-CSRF-Token": self.client.cookies["depenses_csrf"]}
+    def csrf_headers(self, client=None):
+        client = client or self.client
+        return {"X-CSRF-Token": client.cookies["depenses_csrf"]}
+
+    def register_account(self, client, name, email):
+        return client.post(
+            "/api/auth/register",
+            json={"name": name, "email": email, "password": "CorrectHorse!42"},
+            headers=self.csrf_headers(client),
+        )
 
     def test_vercel_requires_a_persistent_database_url(self):
         async def run_lifespan():
@@ -68,29 +78,99 @@ class WebAppTests(unittest.TestCase):
             asyncio.run(run_lifespan())
             initialize.assert_not_called()
 
-    def test_api_is_available_without_authentication(self):
-        self.assertEqual(self.client.get("/api/dashboard").status_code, 200)
-        self.assertEqual(self.client.get("/api/transactions").status_code, 200)
-        self.assertEqual(self.client.get("/api/me").status_code, 404)
-        self.assertEqual(
-            self.client.post("/api/auth/request-code", json={}).status_code, 404
-        )
+    def test_financial_api_requires_an_authenticated_account(self):
+        with TestClient(web_app.app) as anonymous:
+            anonymous.get("/api/csrf")
+            self.assertEqual(anonymous.get("/api/auth/me").status_code, 401)
+            self.assertEqual(anonymous.get("/api/dashboard").status_code, 401)
+            self.assertEqual(anonymous.get("/api/transactions").status_code, 401)
+            self.assertEqual(anonymous.get("/api/profile").status_code, 401)
 
-    def test_profile_is_saved_in_sqlite_and_can_be_changed(self):
-        self.assertEqual(self.client.get("/api/profile").json(), {"name": ""})
+    def test_registration_validates_email_and_password(self):
+        invalid_email = self.client.post(
+            "/api/auth/register",
+            json={
+                "name": "New User",
+                "email": "not-an-email",
+                "password": "CorrectHorse!42",
+            },
+            headers=self.csrf_headers(),
+        )
+        self.assertEqual(invalid_email.status_code, 422)
+        weak_password = self.client.post(
+            "/api/auth/register",
+            json={"name": "New User", "email": "new@example.com", "password": "short"},
+            headers=self.csrf_headers(),
+        )
+        self.assertEqual(weak_password.status_code, 422)
+
+    def test_accounts_are_private_and_can_log_in_and_out(self):
+        account = self.client.get("/api/auth/me").json()
+        self.assertEqual(account["email"], "user@example.com")
+        self.assertEqual(account["name"], "Test User")
+        session_token = self.client.cookies[web_app.SESSION_COOKIE]
+        session_cookie = next(
+            cookie
+            for cookie in self.client.cookies.jar
+            if cookie.name == web_app.SESSION_COOKIE
+        )
+        self.assertTrue(session_cookie.has_nonstandard_attr("HttpOnly"))
+        with web_database.connect(web_app.DATABASE_PATH) as connection:
+            stored_session = connection.execute(
+                "SELECT token_hash FROM sessions WHERE user_id = ?", (account["id"],)
+            ).fetchone()
+        self.assertEqual(
+            stored_session["token_hash"],
+            hashlib.sha256(session_token.encode("ascii")).hexdigest(),
+        )
+        duplicate = self.register_account(self.client, "Another Name", "USER@example.com")
+        self.assertEqual(duplicate.status_code, 409)
+
+        with TestClient(web_app.app) as another_client:
+            another_client.get("/api/csrf")
+            invalid_login = another_client.post(
+                "/api/auth/login",
+                json={"email": "user@example.com", "password": "wrong-password"},
+                headers=self.csrf_headers(another_client),
+            )
+            self.assertEqual(invalid_login.status_code, 401)
+            login = another_client.post(
+                "/api/auth/login",
+                json={
+                    "email": " USER@EXAMPLE.COM ",
+                    "password": "CorrectHorse!42",
+                },
+                headers=self.csrf_headers(another_client),
+            )
+            self.assertEqual(login.status_code, 200, login.text)
+            self.assertEqual(login.json()["id"], account["id"])
+            self.assertEqual(
+                another_client.post(
+                    "/api/auth/logout",
+                    json={},
+                    headers=self.csrf_headers(another_client),
+                ).status_code,
+                200,
+            )
+            self.assertEqual(another_client.get("/api/auth/me").status_code, 401)
+
+    def test_profile_is_saved_for_the_authenticated_user(self):
+        self.assertEqual(self.client.get("/api/profile").json(), {"name": "Test User"})
         payload = {"name": "  Awa Traoré  "}
         saved = self.client.put(
             "/api/profile", json=payload, headers=self.csrf_headers()
         )
         self.assertEqual(saved.status_code, 200, saved.text)
         self.assertEqual(saved.json(), {"name": "Awa Traoré"})
+        account = self.client.get("/api/auth/me").json()
         self.assertEqual(
-            web_database.get_local_profile(web_app.DATABASE_PATH),
-            {"name": "Awa Traoré"},
+            web_database.get_user(web_app.DATABASE_PATH, account["id"])["name"],
+            "Awa Traoré",
         )
 
         reopened_client = TestClient(web_app.app)
         try:
+            reopened_client.cookies.update(self.client.cookies)
             self.assertEqual(
                 reopened_client.get("/api/profile").json(),
                 {"name": "Awa Traoré"},
@@ -105,7 +185,7 @@ class WebAppTests(unittest.TestCase):
         no_csrf = self.client.put("/api/profile", json={"name": "Awa"})
         self.assertEqual(no_csrf.status_code, 403)
 
-    def test_transactions_can_be_created_without_an_account(self):
+    def test_transactions_are_saved_in_the_account_space(self):
         headers = self.csrf_headers()
         income = self.client.post(
             "/api/transactions",
@@ -134,18 +214,88 @@ class WebAppTests(unittest.TestCase):
             self.client.get("/api/dashboard").json()["balance_xof"], 19500
         )
 
-    def test_expense_requires_balance_integer_amount_and_csrf(self):
+    def test_accounts_cannot_read_each_others_transactions(self):
+        created = self.client.post(
+            "/api/transactions",
+            json={
+                "amount": "45000",
+                "type": "income",
+                "description": "Revenu privé",
+                "operation_date": "2026-03-04",
+            },
+            headers=self.csrf_headers(),
+        )
+        self.assertEqual(created.status_code, 201)
+        with TestClient(web_app.app) as another_client:
+            another_client.get("/api/csrf")
+            registration = self.register_account(
+                another_client, "Another User", "another@example.com"
+            )
+            self.assertEqual(registration.status_code, 201, registration.text)
+            self.assertEqual(
+                another_client.get("/api/dashboard").json()["balance_xof"], 0
+            )
+            self.assertEqual(another_client.get("/api/transactions").json(), [])
+
+        web_database.initialize(web_app.DATABASE_PATH)
+        self.assertEqual(self.client.get("/api/dashboard").json()["balance_xof"], 45000)
+        self.assertEqual(
+            self.client.get("/api/auth/me").json()["email"], "user@example.com"
+        )
+
+    def test_import_from_a_multi_account_database_only_reads_legacy_space(self):
+        web_database.add_transaction(
+            web_app.DATABASE_PATH,
+            1,
+            6000,
+            "income",
+            "Ancien revenu local",
+            None,
+            "2026-03-04",
+        )
+        account_id = self.client.get("/api/auth/me").json()["id"]
+        web_database.add_transaction(
+            web_app.DATABASE_PATH,
+            account_id,
+            99000,
+            "income",
+            "Autre compte",
+            None,
+            "2026-03-04",
+        )
+
+        rows = web_app._read_legacy_database(Path(web_app.DATABASE_PATH).read_bytes())
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["description"], "Ancien revenu local")
+        self.assertEqual(rows[0]["amount_xof"], 6000)
+
+    def test_expense_can_make_balance_negative_and_csrf_is_required(self):
         payload = {
-            "amount": "1",
+            "amount": "32000",
             "type": "expense",
             "description": "Café",
             "category": "Alimentation",
             "operation_date": "2026-03-04",
         }
-        rejected = self.client.post(
+        income = self.client.post(
+            "/api/transactions",
+            json={
+                "amount": "20000",
+                "type": "income",
+                "description": "Revenu",
+                "operation_date": "2026-03-04",
+            },
+            headers=self.csrf_headers(),
+        )
+        self.assertEqual(income.status_code, 201, income.text)
+        accepted = self.client.post(
             "/api/transactions", json=payload, headers=self.csrf_headers()
         )
-        self.assertEqual(rejected.status_code, 422)
+        self.assertEqual(accepted.status_code, 201, accepted.text)
+        self.assertEqual(
+            self.client.get("/api/dashboard").json()["balance_xof"], -12000
+        )
 
         decimal_amount = self.client.post(
             "/api/transactions",
@@ -320,18 +470,18 @@ class WebAppTests(unittest.TestCase):
                 )
             }
         connection.close()
-        self.assertNotIn("password_hash", user_columns)
+        self.assertIn("password_hash", user_columns)
         self.assertNotIn("password_salt", user_columns)
         self.assertEqual([tuple(row) for row in users], [(1, "local@finmee.invalid")])
         self.assertEqual(balance, 7872)
-        self.assertNotIn("sessions", tables)
+        self.assertIn("sessions", tables)
         self.assertNotIn("otp_challenges", tables)
         self.assertNotIn("otp_requests", tables)
 
     def test_pwa_shell_is_served_with_security_headers_and_xof_manifest(self):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
-        self.assertNotIn(b"auth-screen", response.content)
+        self.assertIn(b"auth-screen", response.content)
         self.assertNotIn(b"otp", response.content.lower())
         self.assertIn("Content-Security-Policy", response.headers)
         manifest = self.client.get("/manifest.webmanifest")
