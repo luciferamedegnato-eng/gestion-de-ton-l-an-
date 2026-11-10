@@ -39,6 +39,12 @@ docker build -t finmee .
 docker run --rm -p 127.0.0.1:8000:8000 -v finmee-data:/data finmee
 ```
 
+## Déploiement Vercel
+
+`pyproject.toml` indique à Vercel de charger l’application FastAPI depuis `web_app:app`, au lieu de confondre `main.py` avec le point d’entrée web. Cela corrige la détection FastAPI lors de la compilation.
+
+Cette configuration ne rend pas les données persistantes sur Vercel : l’application utilise SQLite dans `data/accounts.db`, alors que le système de fichiers d’une fonction Vercel n’est pas un stockage durable. De plus, l’application locale n’a pas d’authentification. Ne déployez pas de données financières réelles sur un site public avec cette configuration seule. Un déploiement public nécessite une base de données persistante et une protection d’accès adaptée.
+
 ## Tests
 
 ```powershell
