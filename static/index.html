@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f6f5fb">
+  <meta name="description" content="Suivez simplement vos revenus et dépenses.">
+  <title>Finmee — Mes finances, simplement</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <div id="app-screen" class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="#" data-page="dashboard"><span class="brand-mark">f</span><span>finmee</span></a>
+      <span class="side-label">VOTRE ESPACE</span>
+      <nav class="side-nav" aria-label="Navigation principale">
+        <button class="nav-link active" data-page="dashboard"><span class="nav-icon">⌂</span>Vue d’ensemble</button>
+        <button class="nav-link" data-page="transactions"><span class="nav-icon">↕</span>Transactions</button>
+        <button class="nav-link" data-page="analytics"><span class="nav-icon">▥</span>Analyses</button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="sidebar-tip">
+          <span class="tip-icon">✳</span>
+          <strong>Un jour à la fois.</strong>
+          <p>Chaque petit suivi vous rapproche de vos objectifs.</p>
+        </div>
+        <button class="nav-link" data-page="import"><span class="nav-icon">⇧</span>Importer mes données</button>
+        <button class="profile-row" id="profile-button" type="button" aria-label="Modifier mon profil"><span class="avatar" id="profile-avatar">?</span><span class="profile-email" id="profile-name">Ajouter mon nom</span><span class="profile-dot"></span></button>
+      </div>
+    </aside>
+
+    <section class="main-column">
+      <header class="topbar">
+        <button id="menu-button" class="icon-button mobile-menu" aria-label="Ouvrir le menu">☰</button>
+        <div><span class="eyebrow" id="page-kicker">VOTRE ESPACE</span><h1 id="page-title">Bonjour !</h1></div>
+        <div class="topbar-actions"><button class="button button-quiet install-button" id="install-button" hidden>Installer l’app <span>↓</span></button><button class="button button-primary" id="add-transaction-button"><span>＋</span> Ajouter une opération</button></div>
+      </header>
+
+      <div id="notice" class="notice global-notice" role="status" hidden></div>
+
+      <section id="dashboard-page" class="page-content">
+        <div class="welcome-row"><div><h2>Un aperçu tout en douceur.</h2><p>Voici où en sont vos finances ce mois-ci.</p></div><span class="date-pill" id="today-label"></span></div>
+        <div class="summary-grid">
+          <article class="summary-card balance-card"><div class="card-heading"><span>Solde disponible</span><span class="card-symbol symbol-purple">◈</span></div><strong id="balance-total" class="balance-amount">—</strong><span class="card-caption">Revenus moins dépenses cumulés</span><div class="balance-decoration"></div></article>
+          <article class="summary-card"><div class="card-heading"><span>Revenus du mois</span><span class="card-symbol symbol-teal">↙</span></div><strong id="month-income" class="metric-amount">—</strong><span class="card-caption"><span class="positive-dot"></span>Entrées d’argent</span></article>
+          <article class="summary-card"><div class="card-heading"><span>Dépenses du mois</span><span class="card-symbol symbol-pink">↗</span></div><strong id="month-expenses" class="metric-amount">—</strong><span class="card-caption"><span class="pink-dot"></span>Sorties d’argent</span></article>
+        </div>
+
+        <div class="content-grid">
+          <article class="panel cashflow-panel">
+            <div class="panel-heading"><div><span class="eyebrow">VOTRE RYTHME</span><h2>Revenus & dépenses</h2></div><button class="select-wrap"><select id="chart-period" aria-label="Période du graphique"><option value="month">Par mois</option><option value="day">Par jour</option><option value="year">Par année</option></select></button></div>
+            <div id="cashflow-chart" class="bar-chart" aria-label="Graphique des revenus et dépenses"></div>
+            <div class="chart-legend"><span><i class="legend-income"></i>Revenus</span><span><i class="legend-expense"></i>Dépenses</span></div>
+          </article>
+          <article class="panel category-panel">
+            <div class="panel-heading"><div><span class="eyebrow">CE QUI COMPTE</span><h2>Mes catégories</h2></div><span class="panel-spark">✳</span></div>
+            <div id="category-list" class="category-list"></div>
+            <button class="link-button" data-page="analytics">Voir les analyses <span>→</span></button>
+          </article>
+        </div>
+
+        <article class="panel transactions-panel">
+          <div class="panel-heading"><div><span class="eyebrow">VOS DERNIERS MOUVEMENTS</span><h2>Transactions récentes</h2></div><button class="link-button" data-page="transactions">Tout voir <span>→</span></button></div>
+          <div id="recent-transactions"></div>
+        </article>
+        <p class="app-footnote">Application locale à utilisateur unique. Gardez cet appareil et son serveur privés.</p>
+      </section>
+
+      <section id="transactions-page" class="page-content subpage" hidden>
+        <div class="welcome-row"><div><h2>Chaque mouvement compte.</h2><p>Retrouvez vos 250 dernières opérations.</p></div></div>
+        <article class="panel transactions-panel full-transactions"><div id="all-transactions"></div></article>
+      </section>
+
+      <section id="analytics-page" class="page-content subpage" hidden>
+        <div class="welcome-row"><div><h2>Votre histoire, en chiffres.</h2><p>Repérez vos habitudes, à votre rythme.</p></div><button class="select-wrap"><select id="analytics-period" aria-label="Période des analyses"><option value="month">Par mois</option><option value="day">Par jour</option><option value="year">Par année</option></select></button></div>
+        <div id="analytics-summary" class="summary-grid analytics-summary"></div>
+        <div class="content-grid analytics-grid"><article class="panel"><div class="panel-heading"><div><span class="eyebrow">RÉPARTITION</span><h2>Dépenses par catégorie</h2></div></div><div id="analytics-categories" class="category-list"></div></article><article class="panel"><div class="panel-heading"><div><span class="eyebrow">AU FIL DU TEMPS</span><h2>Détail des périodes</h2></div></div><div id="period-table"></div></article></div>
+      </section>
+
+      <section id="import-page" class="page-content subpage" hidden>
+        <div class="welcome-row"><div><h2>Un nouveau départ, pas une page blanche.</h2><p>Importez les transactions de votre ancienne application.</p></div></div>
+        <article class="panel import-panel"><div class="import-icon">⇧</div><span class="eyebrow">IMPORT DE DONNÉES</span><h2>Retrouvez vos opérations</h2><p>Choisissez le fichier <code>depenses.db</code> créé par la version terminal.</p><form id="import-form"><label class="file-picker" for="import-file"><span>Choisir une base SQLite</span><input id="import-file" name="file" type="file" accept=".db,.sqlite,.sqlite3,application/vnd.sqlite3" required></label><span id="file-name" class="file-name">Aucun fichier sélectionné</span><button class="button button-primary" type="submit">Importer mes transactions <span>→</span></button></form><div class="import-note"><span>◎</span><span>Le fichier ne doit pas dépasser 12 Mo. Le même fichier ne sera importé qu’une seule fois.</span></div></article>
+      </section>
+    </section>
+  </div>
+
+  <dialog id="profile-dialog" class="transaction-dialog profile-dialog">
+    <form id="profile-form">
+      <div class="dialog-heading"><div><span class="eyebrow">VOTRE PROFIL LOCAL</span><h2 id="profile-title">Comment vous appelez-vous ?</h2></div><button type="button" class="icon-button" id="close-profile-dialog" aria-label="Fermer">×</button></div>
+      <p class="profile-description">Votre nom sera enregistré avec vos données sur cet appareil.</p>
+      <label for="profile-name-input">Votre nom</label>
+      <input id="profile-name-input" name="name" type="text" autocomplete="name" maxlength="80" placeholder="Ex. Awa Traoré" required>
+      <button class="button button-primary dialog-submit" id="save-profile-button" type="submit">Enregistrer mon nom <span>→</span></button>
+    </form>
+  </dialog>
+
+  <dialog id="transaction-dialog" class="transaction-dialog">
+    <form id="transaction-form" method="dialog">
+      <div class="dialog-heading"><div><span class="eyebrow">NOUVELLE OPÉRATION</span><h2>On note ça ?</h2></div><button type="button" class="icon-button" id="close-dialog" aria-label="Fermer">×</button></div>
+      <div class="type-toggle"><button type="button" class="type-option selected" data-type="expense">Dépense</button><button type="button" class="type-option" data-type="income">Revenu</button></div>
+      <label for="transaction-amount">Montant en francs CFA</label><div class="amount-input"><span>FCFA</span><input id="transaction-amount" name="amount" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required></div>
+      <label for="transaction-description">Description</label><input id="transaction-description" name="description" type="text" maxlength="200" placeholder="Ex. Courses du dimanche" required>
+      <div id="category-field"><label for="transaction-category">Catégorie</label><select id="transaction-category" name="category"><option>Alimentation</option><option>Transport</option><option>Logement</option><option>Santé</option><option>Loisirs</option><option>Autre</option></select></div>
+      <label for="transaction-date">Date</label><input id="transaction-date" name="operation_date" type="date" required>
+      <button class="button button-primary dialog-submit" type="submit">Enregistrer <span>→</span></button>
+    </form>
+  </dialog>
+</body>
+</html>

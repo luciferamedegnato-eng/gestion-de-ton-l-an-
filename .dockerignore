@@ -1,0 +1,7 @@
+.git
+.venv
+__pycache__
+data
+test_*.py
+README.md
+requirements-dev.txt

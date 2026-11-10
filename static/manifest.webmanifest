@@ -1,0 +1,33 @@
+{
+  "id": "/",
+  "name": "Finmee — Gestion de dépenses",
+  "short_name": "Finmee",
+  "description": "Suivez vos revenus et vos dépenses en francs CFA BCEAO (XOF).",
+  "lang": "fr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#f6f5fb",
+  "background_color": "#f7f6fb",
+  "icons": [
+    {
+      "src": "/assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
