@@ -41,9 +41,14 @@ docker run --rm -p 127.0.0.1:8000:8000 -v finmee-data:/data finmee
 
 ## Déploiement Vercel
 
-`pyproject.toml` indique à Vercel de charger l’application FastAPI depuis `web_app:app`, au lieu de confondre `main.py` avec le point d’entrée web. Cela corrige la détection FastAPI lors de la compilation.
+`pyproject.toml` indique à Vercel de charger l’application FastAPI depuis `web_app:app`. Pour que les données survivent aux redéploiements et aux démarrages à froid, l’application utilise PostgreSQL sur Vercel (`DATABASE_URL` ou `POSTGRES_URL`) et SQLite en local.
 
-Cette configuration ne rend pas les données persistantes sur Vercel : l’application utilise SQLite dans `data/accounts.db`, alors que le système de fichiers d’une fonction Vercel n’est pas un stockage durable. De plus, l’application locale n’a pas d’authentification. Ne déployez pas de données financières réelles sur un site public avec cette configuration seule. Un déploiement public nécessite une base de données persistante et une protection d’accès adaptée.
+1. Créez une base PostgreSQL, par exemple avec Neon depuis le Marketplace Vercel, et liez-la au projet.
+2. Dans **Project Settings → Environment Variables**, vérifiez qu’une URL de connexion PostgreSQL (`DATABASE_URL` ou `POSTGRES_URL`) est configurée pour **Production**. Ajoutez-la aussi aux environnements Preview si vous les utilisez. Ne publiez jamais cette URL dans le dépôt ou dans un message.
+3. Dans **Project Settings → Deployment Protection**, activez **Vercel Authentication** et choisissez une portée qui protège **tous les déploiements**, y compris le domaine Production, avant de rendre l’application accessible. Seules les personnes autorisées dans Vercel pourront alors ouvrir le site; l’application elle-même n’a pas de comptes utilisateurs.
+4. Redéployez après avoir configuré la base et la protection. Sans URL PostgreSQL, l’application refuse explicitement de démarrer sur Vercel.
+
+La base PostgreSQL commence vide. Les opérations de l’ancienne base locale `data/accounts.db` ne sont pas transférées automatiquement : après avoir ouvert le déploiement protégé, utilisez **Importer mes données** pour importer l’ancienne base. Conservez une copie de sauvegarde. La protection Vercel est indispensable, car l’application n’a pas d’authentification intégrée.
 
 ## Tests
 

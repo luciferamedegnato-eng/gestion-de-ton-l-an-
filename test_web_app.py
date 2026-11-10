@@ -1,12 +1,40 @@
+import asyncio
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 import web_app
 import web_database
+
+
+class PostgresConnectionTests(unittest.TestCase):
+    def test_execute_translates_sqlite_placeholders(self):
+        class FakeConnection:
+            def __init__(self):
+                self.calls = []
+
+            def execute(self, query, parameters):
+                self.calls.append((query, parameters))
+
+            def executemany(self, query, parameters):
+                self.calls.append((query, parameters))
+
+        connection = FakeConnection()
+        adapter = web_database.PostgresConnection(connection)
+        adapter.execute("SELECT * FROM users WHERE id = ?", (1,))
+        adapter.executemany("UPDATE users SET name = ? WHERE id = ?", [("Awa", 1)])
+
+        self.assertEqual(
+            connection.calls,
+            [
+                ("SELECT * FROM users WHERE id = %s", (1,)),
+                ("UPDATE users SET name = %s WHERE id = %s", [("Awa", 1)]),
+            ],
+        )
 
 
 class WebAppTests(unittest.TestCase):
@@ -27,6 +55,18 @@ class WebAppTests(unittest.TestCase):
 
     def csrf_headers(self):
         return {"X-CSRF-Token": self.client.cookies["depenses_csrf"]}
+
+    def test_vercel_requires_a_persistent_database_url(self):
+        async def run_lifespan():
+            with self.assertRaisesRegex(RuntimeError, "DATABASE_URL"):
+                async with web_app.lifespan(web_app.app):
+                    self.fail("Lifespan should not start without PostgreSQL.")
+
+        with patch.dict("os.environ", {"VERCEL": "1"}), patch.object(
+            web_app, "DATABASE_URL", None
+        ), patch.object(web_database, "initialize") as initialize:
+            asyncio.run(run_lifespan())
+            initialize.assert_not_called()
 
     def test_api_is_available_without_authentication(self):
         self.assertEqual(self.client.get("/api/dashboard").status_code, 200)

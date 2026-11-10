@@ -19,7 +19,8 @@ import web_database
 
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
-DATABASE_PATH = Path(
+DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL")
+DATABASE_PATH = DATABASE_URL or Path(
     os.environ.get("EXPENSES_DB", str(ROOT / "data" / "accounts.db"))
 )
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "1") != "0"
@@ -40,6 +41,10 @@ ALLOWED_CATEGORIES = {
 
 @asynccontextmanager
 async def lifespan(_app):
+    if os.environ.get("VERCEL") and not DATABASE_URL:
+        raise RuntimeError(
+            "Set DATABASE_URL or POSTGRES_URL to a persistent PostgreSQL database on Vercel."
+        )
     web_database.initialize(DATABASE_PATH)
     yield
 
